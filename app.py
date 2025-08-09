@@ -1,5 +1,6 @@
 import streamlit as st
 import google.generativeai as genai
+import pandas as pd
 import re
 import random
 
@@ -10,16 +11,13 @@ st.set_page_config(
     layout="centered"
 )
 
-# --- GEMINI API CONFIGURATION (SECURED FOR DEPLOYMENT) ---
-# This is the only section that has been changed for deployment.
+# --- GEMINI API CONFIGURATION ---
 try:
-    # When deployed, the app will get the key from Streamlit's secrets.
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 except (KeyError, FileNotFoundError):
-    # This error is shown when the app is deployed without the secret being set.
     st.error("⚠️ Gemini API Key not found!")
-    st.info("Please add your Gemini API Key to the Streamlit secrets to continue.")
-    st.stop() # Stops the app from running further.
+    st.info("For the app to work, the developer needs to set the API Key in the deployment secrets.")
+    st.stop()
 
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
@@ -37,20 +35,32 @@ if "target_name" not in st.session_state:
     st.session_state.target_name = ""
 
 
-# --- PARSING FUNCTION ---
+# --- PARSING FUNCTION (NOW UNIVERSAL FOR iOS & ANDROID) ---
 def parse_chat_and_prepare(uploaded_file, user_name, target_name):
     """Reads the uploaded file and extracts messages from the target person."""
     try:
         chat_content = uploaded_file.read().decode('utf-8')
         lines = chat_content.splitlines()
         
-        pattern = re.compile(r'.*? - ([^:]+): (.*)')
+        # --- THIS IS THE UNIVERSAL FIX ---
+        # Define patterns for both platforms
+        ios_pattern = re.compile(r'\[.*?\] ([^:]+): (.*)')
+        android_pattern = re.compile(r'.*? - ([^:]+): (.*)')
         
         messages = []
         sanitized_target_name = re.sub(r'[^\w]', '', target_name).lower()
 
         for line in lines:
-            match = pattern.match(line)
+            # Check which pattern matches the line
+            ios_match = ios_pattern.match(line)
+            android_match = android_pattern.match(line)
+            
+            match = None
+            if ios_match:
+                match = ios_match
+            elif android_match:
+                match = android_match
+            
             if match:
                 sender_name_from_file = match.group(1)
                 sanitized_file_name = re.sub(r'[^\w]', '', sender_name_from_file).lower()
@@ -59,7 +69,7 @@ def parse_chat_and_prepare(uploaded_file, user_name, target_name):
                     messages.append(match.group(2).strip())
         
         if not messages:
-            st.error(f"Couldn't find any messages from '{target_name}'. Please double-check the spelling.")
+            st.error(f"Couldn't find any messages from '{target_name}'. Please double-check the spelling and ensure the file is a valid WhatsApp chat export.")
             return False
         
         st.session_state.person_messages = messages
@@ -106,7 +116,6 @@ with st.sidebar:
 
 # --- MAIN CHAT INTERFACE ---
 if st.session_state.processing_done:
-    # (The rest of the chat interface code remains exactly the same)
     for message in st.session_state.chat_history:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
@@ -138,7 +147,6 @@ if st.session_state.processing_done:
             Now, based on all of this, provide a natural, in-character response to the last message from {st.session_state.user_name}.
             Respond as {st.session_state.target_name}:
             """
-
             try:
                 response = model.generate_content(master_prompt)
                 bot_reply = response.text
